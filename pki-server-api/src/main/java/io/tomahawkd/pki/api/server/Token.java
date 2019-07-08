@@ -20,8 +20,6 @@ import java.security.PublicKey;
 import java.util.Base64;
 import java.util.Map;
 
-@RestController
-@RequestMapping("/api/token")
 public class Token {
     private PublicKey publicKey;
     private PrivateKey privateKey;
@@ -61,17 +59,17 @@ public class Token {
     }
 
     /**
+     * @Param data {"payload": "Base64 encoded Ks public key encrypted (username,password)",
+     *      * "S": "Base64 encoded Ks public key encrypted (Kc,s,time1)",
+     *      * "K": "Base64 encoded Kt public key encrypted Kc,t",
+     *      * "iv": "Base64 encoded Kt public key encrypted iv"}
      * @return {"EToken": "Base64 encoded Kc public key encrypted token",
-     * "M": {"status": (number -1,0,1,2),"message": "status description"},
+     * "M": {"status": (number 0,1,2),"message": "status description"},
      * "KP": "Base64 encoded Kc,t encrypted (Kc public key,Kc private key)",
      * "T": "Base64 encoded Kc public key encrypted (time1+1)"}
-     * @Param data {"payload": "Base64 encoded Ks public key encrypted (username,password)",
-     * "S": "Base64 encoded Ks public key encrypted (Kc,s,time1)",
-     * "K": "Base64 encoded Kt public key encrypted Kc,t",
-     * "iv": "Base64 encoded Kt public key encrypted iv"}
+     *
      */
-    @PostMapping("/init")
-    public String acceptInitializeAuthenticationMessage(@RequestParam String body, HttpServletRequest request, ThrowableBiFunction<String, Integer> callback) throws Exception {
+    public String acceptInitializeAuthenticationMessage( String body, HttpServletRequest request, ThrowableBiFunction<String, Integer> callback) throws Exception {
         Map<String, String> bodyData =
                 new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
                 }.getType());
@@ -81,7 +79,7 @@ public class Token {
 
         int usrid = callback.apply(payload);
         if (usrid == -1)
-            return "{\"M\":{\"status\":4,\"message\":\"user function failed\"}}";
+            return "{\"M\":{\"status\":2,\"message\":\"user function failed\"}}";
 
         String eS = new String(decoder.decode(bodyData.get("S")), StandardCharsets.UTF_8);
         String time1 = new String(SecurityFunctions.decryptAsymmetric(privateKey, eS.getBytes()));
@@ -138,7 +136,7 @@ public class Token {
             line = buff.readLine();
         }
         if (error)
-            return "{\"M\":{\"status\":3,\"message\":\"" + text.toString() + "\"}}";
+            return "{\"M\":{\"status\":2,\"message\":\"" + text.toString() + "\"}}";
 
         String eresult = text.toString();
         Map<String, String> result =
@@ -166,20 +164,19 @@ public class Token {
     }
 
     /**
-     * @return {"T": "Base64 encoded Kc public key encrypted token",
-     * "M": {"status": (number 0,1,2),"message":
-     * "status description"}
-     * "payload": "Base64 encoded Kc public key encrypted data"}
      * @Param data {"payload": "Base64 encoded data",
-     * "EToken": "Base64 encoded Kt public key encrypted (token,nonce+1)",
-     * <p>
-     * "systemid": "Base64 encoded Kt public key encrypted systemid"
-     * <p>
-     * payload
-     * "T": "Base64 encoded Ks public key encrypted time1"}
+     *      * "EToken": "Base64 encoded Kt public key encrypted (token,nonce+1)",
+     *      * payload
+     *      * "T": "Base64 encoded Ks public key encrypted time1"}
+     * @return {"T": "Base64 encoded Kc public key encrypted token",
+     * "M": {
+     * "status": (number 0,1,2),"message":
+     * "status description"
+     * }
+     * "payload": "Base64 encoded Kc public key encrypted data"}
+     *
      */
-    @PostMapping("/validate")
-    public String authentication(@RequestParam String body, HttpServletRequest request, ReturnDataFunction<String, String, String> callback) throws Exception {
+    public String authentication( String body, HttpServletRequest request, ReturnDataFunction<String, String, String> callback) throws Exception {
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
         Base64.Decoder decoder = Base64.getDecoder();
@@ -254,16 +251,20 @@ public class Token {
         return "{\"M\":{\"status\":1,\"message\":time authentiaction failed\"}";
     }
     /**
-     * @param
-     * @return
-     *
+     * @param {
+     *  "K": "Base64 encoded Kt public key encrypted Kct"
+     *  "iv": "Base64 encoded Kt public key encrypted iv"
+     * }
+     * @return {
+     * "nonce2": "Base64 encoded Kc encrypted nonce2"
+     * "M": {"status": 0:success,1:time authentication failed,2:other error,
+     *      "message": "description"}
+     * }
      */
     public String qrgenerate(String body, HttpServletRequest request) throws Exception {
         Map<String, String> map = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
         String Kct = map.get("K");
-        String time = new String(SecurityFunctions.decryptAsymmetric(privateKey, Base64.getDecoder().decode(map.get("T"))), StandardCharsets.UTF_8);
-        int time1 = ByteBuffer.wrap(time.getBytes()).order(ByteOrder.LITTLE_ENDIAN).getInt();
         String iv = map.get("iv");
         int time2 = SecurityFunctions.generateRandom();
         String systemid = "";       //写死的
@@ -274,19 +275,20 @@ public class Token {
                 + "\",\"systemid\":\"" + systemid + "\"}";
         Map<String, Object> result = request(content, "/qr/genqr");
         if ((boolean) result.get("status"))
-            return "{\"M\":{\"status\":1,\"message\":\"" + result.get("message") + "\"}}";
+            return "{\"M\":{\"status\":2,\"message\":\"" + result.get("message") + "\"}}";
 
         String chat = new String(SecurityFunctions.decryptAsymmetric(privateKey, Base64.getDecoder().decode((String) result.get("T"))), StandardCharsets.UTF_8);
         int t = ByteBuffer.wrap(chat.getBytes()).order(ByteOrder.LITTLE_ENDIAN).getInt();
         if (t != time2 + 1)
-            return "\"M\":{\"status\":2,\"message\":\"time authentication failed\"}";
+            return "\"M\":{\"status\":1,\"message\":\"time authentication failed\"}";
         Map<String, String> M = new Gson().fromJson((String) result.get("M"), new TypeToken<Map<String, String>>() {
         }.getType());
         if (Integer.valueOf(M.get("status")) == 1)
-            return "\"M\":{\"status\":3,\"message\":\"" + M.get("message") + "\"}";
+            return "\"M\":{\"status\":2,\"message\":\"" + M.get("message") + "\"}";
         return "{\"nonce2\":\"" + result.get("nonce2") + "\",\"M\":{\"status\":0,\"message\":\""
                 + (String) M.get("message") + "\"}}";
     }
+
 
 
     /**
@@ -299,14 +301,13 @@ public class Token {
      * @return {
      * "M": "
      * {
-     * "status": number(0:valid, 1:invalid),
+     * "status": number(0:valid, 1:,2),
      * "message": ""
      * }",
      * "T": "Base64 encoded Kc public key encrypted challenge number + 1",
      * }
      */
-    @PostMapping()
-    public String qroperation(@RequestBody String body, HttpServletRequest request) throws Exception {
+    public String qroperation( String body, HttpServletRequest request) throws Exception {
         Base64.Decoder decoder = Base64.getDecoder();
         Base64.Encoder encoder = Base64.getEncoder();
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
@@ -345,7 +346,7 @@ public class Token {
         }
 
         if ((boolean) result.get("status"))
-            return "{\"M\":{\"status\":1,\"message\":\"" + result.get("message") + "\"}}";
+            return "{\"M\":{\"status\":2,\"message\":\"" + result.get("message") + "\"}}";
 
         Map<String, String> receive = new Gson().fromJson((String) result.get("message"), new TypeToken<Map<String, String>>() {
         }.getType());
@@ -367,7 +368,7 @@ public class Token {
                 String T_1 = encoder.encodeToString(time_1.getBytes());
                 return "{\"M\":{\"status\":0,\"message\":\"" + mes.get("message") + "\"},\"T\":\"" + T_1 + "\"}";
             }
-            return "\"M\":{\"status\":3,\"message\":\"time authentiaction failed\"}";
+            return "\"M\":{\"status\":1,\"message\":\"time authentiaction failed\"}";
         } else {
             String Kc = new String(SecurityFunctions.decryptAsymmetric(privateKey, decoder.decode(receive.get("K"))), "UTF-8");
             PublicKey Kcpub = SecurityFunctions.readPublicKey(Kc);
@@ -384,17 +385,16 @@ public class Token {
             return "{\"M\":{\"status\":0,\"message\":\"" + message + "\"},\"T\":\"" + T_1 + "\"}";
         }
     }
-    // T noce2  system   D
 
     /**
      * -
-     *
-     * @return M:{type: -1 not exists 0 not scanned 1 scanned 2 confimed} if type==2  EToken :  KP:
+     *@Param nonce2
+     * @return
+     * M:{type: -1 not exists 0 not scanned 1 scanned 2 confimed} if type==2  EToken :  KP:
      * if type==2  EToken  KP
-     * @Param noce2
+     *
      */
-    @PostMapping("/rolling")
-    public String rolling(@RequestBody String body, HttpServletRequest request) throws Exception {
+    public String rolling( String body, HttpServletRequest request) throws Exception {
         Base64.Decoder decoder = Base64.getDecoder();
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
@@ -457,7 +457,7 @@ public class Token {
             } else
                 return "{\"M\":\"" + m + "\"}";
         } else
-            return "\"M\":{\"status\":1,\"message\":\"time authentiaction failed\"}";
+            return "{\"M\":{\"status\":1,\"message\":\"time authentiaction failed\"}}";
     }
 
     /**
@@ -469,15 +469,14 @@ public class Token {
      * "
      * "M": "
      * {
-     * "status": number(0:valid, 1:invalid),
-     * "message": "service message"
+     * "status": number(0:valid, 1:invalid,2:error),
+     * "message": ""
      * }",
      * "T": "Base64 encoded Kc public key encrypted challenge number + 1",
      * <p>
      * }
      */
-    @PostMapping("/")
-    public String userLogManagement(@RequestBody String body, HttpServletRequest request) throws Exception {
+    public String userLogManagement( String body, HttpServletRequest request) throws Exception {
         Base64.Decoder decoder = Base64.getDecoder();
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
@@ -549,14 +548,13 @@ public class Token {
      * @return {
      * "M":
      * {
-     * "status": number(0:valid, 1:invalid),
-     * "message": "service message"
+     * "status": number(0:valid, 1:invalid,2:error),
+     * "message": ""
      * }",
      * "T": "Base64 encoded Kc public key encrypted challenge number + 1",
      * }
      */
-    @PostMapping("/")
-    public String tokenListManagement(@RequestBody String body, HttpServletRequest request) throws Exception {
+    public String tokenListManagement( String body, HttpServletRequest request) throws Exception {
         Base64.Decoder decoder = Base64.getDecoder();
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
@@ -633,15 +631,14 @@ public class Token {
      * @return {
      * "M": "
      * {
-     * "status": number(0:valid, 1:invalid),
+     * "status": number(0:valid, 1:invalid,2:error),
      * "message": "service message"
      * }",
      * "T": "Base64 encoded Kc public key encrypted challenge number + 1",
      * "
      * }
      */
-    @PostMapping("/")
-    public String revokeToken(@RequestBody String body, HttpServletRequest request) throws Exception {
+    public String revokeToken( String body, HttpServletRequest request) throws Exception {
         Base64.Decoder decoder = Base64.getDecoder();
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
@@ -724,8 +721,7 @@ public class Token {
      * "T": "Base64 encoded Kc public key encrypted challenge number + 1",
      * }
      */
-    @PostMapping("/")
-    public String regenerateKeys(@RequestBody String body, HttpServletRequest request) throws Exception {
+    public String regenerateKeys( String body, HttpServletRequest request) throws Exception {
         Base64.Decoder decoder = Base64.getDecoder();
         Map<String, String> bodydata = new Gson().fromJson(body, new TypeToken<Map<String, String>>() {
         }.getType());
